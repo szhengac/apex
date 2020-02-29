@@ -162,6 +162,7 @@ struct NesLAMBStage2Functor
     volatile int* noop_gmem,
     TensorListMetadata<3>& tl,
     const float beta1,
+    const float beta3,
     const float* per_tensor_param_norm,
     const float* per_tensor_update_m_norm,
     const float* per_tensor_update_g_norm,
@@ -182,7 +183,7 @@ struct NesLAMBStage2Functor
     MATH_T ratio_m = (update_m_norm != 0.0f && param_norm != 0.0f) ? learning_rate * (param_norm / update_m_norm) : learning_rate;
     MATH_T ratio_g = (update_g_norm != 0.0f && param_norm != 0.0f) ? learning_rate * (param_norm / update_g_norm) : learning_rate;
     ratio_m *= beta1;
-    ratio_g *= 1.0f - beta1;
+    ratio_g *= beta3;
 
     T* update_m = (T*)tl.addresses[0][tensor_loc];
     update_m += chunk_idx*chunk_size;
@@ -306,6 +307,8 @@ void multi_tensor_neslamb_cuda(
        	noop_flag,
         grad_q_param_list,
         NesLAMBStage2Functor<scalar_t_0>(),
+	beta1,
+	beta3,
         std::get<1>(param_norm_tuple).DATA_PTR<float>(),
         std::get<1>(update_m_norm_tuple).DATA_PTR<float>(),
         std::get<1>(update_g_norm_tuple).DATA_PTR<float>(),
