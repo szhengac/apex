@@ -112,6 +112,22 @@ void multi_tensor_lamb_cuda(
   const float max_grad_norm,
   at::optional<bool> use_nvlamb_python);
 
+void multi_tensor_neslamb_cuda(
+  int chunk_size,
+  at::Tensor noop_flag,
+  std::vector<std::vector<at::Tensor>> tensor_lists,
+  const float lr,
+  const float beta1,
+  const float beta2,
+  const float epsilon,
+  const int step,
+  const int bias_correction,
+  const float weight_decay,
+  const int grad_averaging,
+  const int mode,
+  const bool normalize_grad);
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("multi_tensor_scale", &multi_tensor_scale_cuda,
         "Fused overflow check + scale for a list of contiguous tensors");
@@ -133,4 +149,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "Compute and apply gradient update to parameters for Adam optimizer");
   m.def("multi_tensor_lamb", &multi_tensor_lamb_cuda,
         "Computes and apply update for LAMB optimizer");
+  m.def("multi_tensor_neslamb", &multi_tensor_neslamb_cuda,
+        "Computes and apply update for Nesterov LAMB optimizer");
 }
