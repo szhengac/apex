@@ -296,7 +296,8 @@ void multi_tensor_neslamb_cuda(
   // Compute update norms
   auto update_m_norm_tuple = multi_tensor_l2norm_cuda(chunk_size, noop_flag, grad_list, true);
 
-  auto update_g_norm_tuple = multi_tensor_l2norm_cuda(chunk_size, noop_flag, grad_list, true);
+  std::vector<std::vector<at::Tensor>> q_list(tensor_lists.begin()+1, tensor_lists.begin()+2);
+  auto update_g_norm_tuple = multi_tensor_l2norm_cuda(chunk_size, noop_flag, q_list, true);
 
   std::vector<std::vector<at::Tensor>> grad_q_param_list(tensor_lists.begin(), tensor_lists.begin()+3);
 
