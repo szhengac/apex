@@ -111,7 +111,7 @@ struct NesLAMBStage1Functor
       for(int ii = 0; ii < ILP; ii++)
       {
         MATH_T scaled_grad = r_g[ii];
-        if (normalize_grad) {
+        if (normalize_grad && grad_norm != 0.0f) {
            scaled_grad /= grad_norm;
         }
         if (mode == MOMENT_MODE_0) {
