@@ -16,7 +16,7 @@ apex.optimizers
 .. autoclass:: FusedLAMB
     :members:
 
-.. autoclass:: FusedNesLAMB
+.. autoclass:: FusedLANS
     :members:
 
 .. autoclass:: FusedNovoGrad

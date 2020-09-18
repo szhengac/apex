@@ -183,7 +183,7 @@ if "--cuda_ext" in sys.argv:
                                    'csrc/multi_tensor_adagrad.cu',
                                    'csrc/multi_tensor_novograd.cu',
                                    'csrc/multi_tensor_lamb.cu',
-                                   'csrc/multi_tensor_neslamb.cu'],
+                                   'csrc/multi_tensor_lans.cu'],
                           extra_compile_args={'cxx': ['-O3'] + version_dependent_macros,
                                               'nvcc':['-lineinfo',
                                                       '-O3',

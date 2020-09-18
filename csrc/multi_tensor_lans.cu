@@ -27,7 +27,7 @@ std::tuple<at::Tensor, at::Tensor> multi_tensor_l2norm_cuda(
 using MATH_T = float;
 
 template<typename T>
-struct NesLAMBStage1Functor
+struct LANSStage1Functor
 {
    __device__ __forceinline__ void operator()(
     int chunk_size,
@@ -90,7 +90,7 @@ struct NesLAMBStage1Functor
         {
           r_g[ii] = g[i];
           r_q[ii] = q[i];
-          // special ?optimization? for neslamb stage 1
+          // special ?optimization? for lans stage 1
           if (decay == 0) {
             r_p[ii] = MATH_T(0);
           }
@@ -155,7 +155,7 @@ struct NesLAMBStage1Functor
 // Step 2 reads in 'update' value and per-tensor param_norm and update_norm.
 // It computes new parameter value.
 template<typename T>
-struct NesLAMBStage2Functor
+struct LANSStage2Functor
 {
    __device__ __forceinline__ void operator()(
     int chunk_size,
@@ -233,7 +233,7 @@ struct NesLAMBStage2Functor
 };
 
 
-void multi_tensor_neslamb_cuda(
+void multi_tensor_lans_cuda(
   int chunk_size,
   at::Tensor noop_flag,
   std::vector<std::vector<at::Tensor>> tensor_lists,
@@ -275,13 +275,13 @@ void multi_tensor_neslamb_cuda(
   // We now in-place modify grad to store update before compute its norm
   // Generally this is not a issue since people modify grad in step() method all the time
   // We can also grab list of empty tensor to avoid this, but I'd like to save space/cpu code
-  DISPATCH_FLOAT_AND_HALF(tensor_lists[0][0].scalar_type(), 0, "neslamb_stage_1",
+  DISPATCH_FLOAT_AND_HALF(tensor_lists[0][0].scalar_type(), 0, "lans_stage_1",
       multi_tensor_apply<5>(
         BLOCK_SIZE,
         chunk_size,
         noop_flag,
         tensor_lists,
-        NesLAMBStage1Functor<scalar_t_0>(),
+        LANSStage1Functor<scalar_t_0>(),
         beta1,
         beta2,
         beta3, // 1-beta1 or 1 depends on averaging mode
@@ -301,13 +301,13 @@ void multi_tensor_neslamb_cuda(
 
   std::vector<std::vector<at::Tensor>> grad_q_param_list(tensor_lists.begin(), tensor_lists.begin()+3);
 
-  DISPATCH_FLOAT_AND_HALF(tensor_lists[0][0].scalar_type(), 0, "neslamb_stage_2",
+  DISPATCH_FLOAT_AND_HALF(tensor_lists[0][0].scalar_type(), 0, "lans_stage_2",
       multi_tensor_apply<3>(
         BLOCK_SIZE,
         chunk_size,
        	noop_flag,
         grad_q_param_list,
-        NesLAMBStage2Functor<scalar_t_0>(),
+        LANSStage2Functor<scalar_t_0>(),
 	beta1,
 	beta3,
         std::get<1>(param_norm_tuple).DATA_PTR<float>(),

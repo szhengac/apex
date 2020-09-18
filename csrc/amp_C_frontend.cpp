@@ -112,7 +112,7 @@ void multi_tensor_lamb_cuda(
   const float max_grad_norm,
   at::optional<bool> use_nvlamb_python);
 
-void multi_tensor_neslamb_cuda(
+void multi_tensor_lans_cuda(
   int chunk_size,
   at::Tensor noop_flag,
   std::vector<std::vector<at::Tensor>> tensor_lists,
@@ -149,6 +149,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "Compute and apply gradient update to parameters for Adam optimizer");
   m.def("multi_tensor_lamb", &multi_tensor_lamb_cuda,
         "Computes and apply update for LAMB optimizer");
-  m.def("multi_tensor_neslamb", &multi_tensor_neslamb_cuda,
-        "Computes and apply update for Nesterov LAMB optimizer");
+  m.def("multi_tensor_lans", &multi_tensor_lans_cuda,
+        "Computes and apply update for LANS optimizer");
 }
