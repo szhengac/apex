@@ -1,9 +1,9 @@
 import torch
 from apex.multi_tensor_apply import multi_tensor_applier
 
-class FusedNesLAMB(torch.optim.Optimizer):
+class FusedLANS(torch.optim.Optimizer):
 
-    """Implements Nesterov LAMB algorithm.
+    """Implements LANS algorithm.
 
     Currently GPU-only.  Requires Apex to be installed via
     ``pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./``.
@@ -13,16 +13,16 @@ class FusedNesLAMB(torch.optim.Optimizer):
       * Fusion of the Nesterov LAMB update's elementwise operations
       * A multi-tensor apply launch that batches the elementwise updates applied to all the model's parameters into one or a few kernel launches.
 
-    :class:`apex.optimizers.FusedNesLAMB`'s usage is identical to any ordinary Pytorch optimizer::
+    :class:`apex.optimizers.FusedLANS`'s usage is identical to any ordinary Pytorch optimizer::
 
-        opt = apex.optimizers.FusedNesLAMB(model.parameters(), lr = ....)
+        opt = apex.optimizers.FusedLANS(model.parameters(), lr = ....)
         ...
         opt.step()
 
-    :class:`apex.optimizers.FusedNesLAMB` may be used with or without Amp.  If you wish to use :class:`FusedNesLAMB` with Amp,
+    :class:`apex.optimizers.FusedLANS` may be used with or without Amp.  If you wish to use :class:`FusedLANS` with Amp,
     you may choose any ``opt_level``::
 
-        opt = apex.optimizers.FusedNesLAMB(model.parameters(), lr = ....)
+        opt = apex.optimizers.FusedLANS(model.parameters(), lr = ....)
         model, opt = amp.initialize(model, opt, opt_level="O0" or "O1 or "O2")
         ...
         opt.step()
@@ -46,6 +46,9 @@ class FusedNesLAMB(torch.optim.Optimizer):
             method is called. (default: True)
         normalize_grad (bool, optional): whether to normalize per-tensor grad
             (default: True)
+
+    .. _Accelerated Large Batch Optimization of BERT Pretraining in 54 minutes:
+        https://arxiv.org/abs/2006.13484
     """
 
     def __init__(self, params, lr=1e-3, bias_correction=True,
@@ -56,14 +59,14 @@ class FusedNesLAMB(torch.optim.Optimizer):
                         betas=betas, eps=eps, weight_decay=weight_decay,
                         grad_averaging=grad_averaging,
                         normalize_grad=normalize_grad)
-        super(FusedNesLAMB, self).__init__(params, defaults)
+        super(FusedLANS, self).__init__(params, defaults)
         if multi_tensor_applier.available:
             import amp_C
             # Skip buffer
             self._dummy_overflow_buf = torch.cuda.IntTensor([0])
-            self.multi_tensor_neslamb = amp_C.multi_tensor_neslamb
+            self.multi_tensor_lans = amp_C.multi_tensor_lans
         else:
-            raise RuntimeError('apex.optimizers.FusedNesLAMB requires cuda extensions')
+            raise RuntimeError('apex.optimizers.FusedLANS requires cuda extensions')
 
         self.adam_w_mode = 1 if adam_w_mode else 0
         self.set_grad_none = set_grad_none
@@ -74,7 +77,7 @@ class FusedNesLAMB(torch.optim.Optimizer):
                 for p in group['params']:
                     p.grad = None
         else:
-            super(FusedNesLAMB, self).zero_grad()
+            super(FusedLANS, self).zero_grad()
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -107,7 +110,7 @@ class FusedNesLAMB(torch.optim.Optimizer):
                 if p.grad is None:
                     continue
                 if p.grad.data.is_sparse:
-                    raise RuntimeError('FusedNesLAMB does not support sparse gradients, please consider SparseAdam instead')
+                    raise RuntimeError('FusedLANS does not support sparse gradients, please consider SparseAdam instead')
 
                 state = self.state[p]
                 # State initialization
@@ -135,7 +138,7 @@ class FusedNesLAMB(torch.optim.Optimizer):
                     raise RuntimeError('FusedLAMB only support fp16 and fp32.')
 
             if(len(g_16) > 0):
-                multi_tensor_applier(self.multi_tensor_neslamb,
+                multi_tensor_applier(self.multi_tensor_lans,
                                      self._dummy_overflow_buf,
                                      [g_16, q_16, p_16, m_16, v_16],
                                      group['lr'],
@@ -149,7 +152,7 @@ class FusedNesLAMB(torch.optim.Optimizer):
                                      self.adam_w_mode,
                                      group['normalize_grad'])
             if(len(g_32) > 0):
-                multi_tensor_applier(self.multi_tensor_neslamb,
+                multi_tensor_applier(self.multi_tensor_lans,
                                      self._dummy_overflow_buf,
                                      [g_32, q_32, p_32, m_32, v_32],
                                      group['lr'],
