@@ -119,11 +119,7 @@ void multi_tensor_lamb_cuda(
   const float max_grad_norm,
   at::optional<bool> use_nvlamb_python);
 
-<<<<<<< HEAD
 void multi_tensor_lans_cuda(
-=======
-void multi_tensor_neslamb_cuda(
->>>>>>> update amp_C
   int chunk_size,
   at::Tensor noop_flag,
   std::vector<std::vector<at::Tensor>> tensor_lists,
