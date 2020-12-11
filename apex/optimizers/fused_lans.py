@@ -63,7 +63,8 @@ class FusedLANS(torch.optim.Optimizer):
         if multi_tensor_applier.available:
             import amp_C
             # Skip buffer
-            self._dummy_overflow_buf = torch.cuda.IntTensor([0])
+            self._dummy_overflow_buf = torch.tensor([0], dtype=torch.int,
+                                                    device=self.param_groups[0]["params"][0].device)
             self.multi_tensor_lans = amp_C.multi_tensor_lans
         else:
             raise RuntimeError('apex.optimizers.FusedLANS requires cuda extensions')
