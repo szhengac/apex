@@ -112,7 +112,7 @@ struct LANSStage1Functor
       {
         MATH_T scaled_grad = r_g[ii];
         if (normalize_grad && grad_norm != 0.0f) {
-           scaled_grad /= grad_norm;
+           scaled_grad /= (grad_norm + epsilon);
         }
         if (mode == MOMENT_MODE_0) {
           // L2 on scaled grad
