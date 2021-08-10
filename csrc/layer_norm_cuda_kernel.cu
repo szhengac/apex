@@ -227,6 +227,103 @@ void cuWelfordMuSigma2(
   }
 }
 
+
+template<> __device__
+void cuWelfordMuSigma2(
+  const at::BFloat16* __restrict__ vals,
+  const int n1,
+  const int n2,
+  const int i1,
+  float& mu,
+  float& sigma2,
+  float* buf)
+{
+  // Assumptions:
+  // 1) blockDim.x == warpSize
+  // 2) Tensor is contiguous
+  // 3) 2*blockDim.y*sizeof(U)+blockDim.y*sizeof(int) shared memory available.
+  //
+  // compute variance and mean over n2
+  float count = 0.0f;
+  mu= float(0);
+  sigma2 = float(0);
+  if (i1 < n1) {
+    // one warp normalizes one n1 index,
+    // synchronization is implicit
+    // initialize with standard Welford algorithm
+    const int numx = blockDim.x * blockDim.y;
+    const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+    const at::BFloat16* lvals = vals + i1*n2;
+    int l = 8*thrx;
+    if ((((size_t)lvals)&3) != 0) {
+      // 16 bit alignment
+      // first thread consumes first point
+      if (thrx == 0) {
+        float curr = static_cast<float>(lvals[0]);
+        cuWelfordOnlineSum(curr,mu,sigma2,count);
+      }
+      ++l;
+    }
+    // at this point, lvals[l] are 32 bit aligned for all threads.
+    for (;  l+7 < n2;  l+=8*numx) {
+      for (int k = 0;  k < 8;  k+=2) {
+	float2 curr = __bfloat1622float2(*((__nv_bfloat162*)(lvals+l+k)));
+        cuWelfordOnlineSum(curr.x,mu,sigma2,count);
+	cuWelfordOnlineSum(curr.y,mu,sigma2,count);
+      }
+    }
+    for (;  l < n2;  ++l) {
+      float curr = static_cast<float>(lvals[l]);
+      cuWelfordOnlineSum(curr,mu,sigma2,count);
+    }
+    // intra-warp reductions
+    for (int l = 0;  l <= 4;  ++l) {
+      int srcLaneB = (threadIdx.x+(1<<l))&31;
+      float muB = WARP_SHFL(mu, srcLaneB);
+      float countB = WARP_SHFL(count, srcLaneB);
+      float sigma2B = WARP_SHFL(sigma2, srcLaneB);
+      cuChanOnlineSum(muB,sigma2B,countB,mu,sigma2,count);
+    }
+    // threadIdx.x == 0 has correct values for each warp
+    // inter-warp reductions
+    if (blockDim.y > 1) {
+      float* ubuf = (float*)buf;
+      float* ibuf = (float*)(ubuf + blockDim.y);
+      for (int offset = blockDim.y/2;  offset > 0;  offset /= 2) {
+        // upper half of warps write to shared
+        if (threadIdx.x == 0 && threadIdx.y >= offset && threadIdx.y < 2*offset) {
+          const int wrt_y = threadIdx.y - offset;
+          ubuf[2*wrt_y] = mu;
+          ubuf[2*wrt_y+1] = sigma2;
+          ibuf[wrt_y] = count;
+        }
+        __syncthreads();
+        // lower half merges
+        if (threadIdx.x == 0 && threadIdx.y < offset) {
+          float muB = ubuf[2*threadIdx.y];
+          float sigma2B = ubuf[2*threadIdx.y+1];
+          float countB = ibuf[threadIdx.y];
+          cuChanOnlineSum(muB,sigma2B,countB,mu,sigma2,count);
+        }
+        __syncthreads();
+      }
+      // threadIdx.x = 0 && threadIdx.y == 0 only thread that has correct values
+      if (threadIdx.x == 0 && threadIdx.y == 0) {
+        ubuf[0] = mu;
+        ubuf[1] = sigma2;
+      }
+      __syncthreads();
+      mu = ubuf[0];
+      sigma2 = ubuf[1]/float(n2);
+      // don't care about final value of count, we know count == n2
+    } else {
+      mu = WARP_SHFL(mu, 0);
+      sigma2 = WARP_SHFL(sigma2/float(n2), 0);
+    }
+  }
+}
+
+
 template<typename U> U rsqrt(U v) {
   return U(1) / sqrt(v);
 }
