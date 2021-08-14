@@ -227,7 +227,7 @@ void cuWelfordMuSigma2(
   }
 }
 
-
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
 template<> __device__
 void cuWelfordMuSigma2(
   const at::BFloat16* __restrict__ vals,
@@ -322,7 +322,7 @@ void cuWelfordMuSigma2(
     }
   }
 }
-
+#endif
 
 template<typename U> U rsqrt(U v) {
   return U(1) / sqrt(v);
