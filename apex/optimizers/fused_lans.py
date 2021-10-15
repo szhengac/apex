@@ -8,9 +8,9 @@ class FusedLANS(torch.optim.Optimizer):
     Currently GPU-only.  Requires Apex to be installed via
     ``pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./``.
 
-    This version of fused LAMB implements 2 fusions.
+    This version of fused LANS implements 2 fusions.
 
-      * Fusion of the Nesterov LAMB update's elementwise operations
+      * Fusion of the LANS update's elementwise operations
       * A multi-tensor apply launch that batches the elementwise updates applied to all the model's parameters into one or a few kernel launches.
 
     :class:`apex.optimizers.FusedLANS`'s usage is identical to any ordinary Pytorch optimizer::
@@ -136,7 +136,7 @@ class FusedLANS(torch.optim.Optimizer):
                     m_32.append(state['exp_avg'])
                     v_32.append(state['exp_avg_sq'])
                 else:
-                    raise RuntimeError('FusedLAMB only support fp16 and fp32.')
+                    raise RuntimeError('FusedLANS only support fp16 and fp32.')
 
             if(len(g_16) > 0):
                 multi_tensor_applier(self.multi_tensor_lans,
