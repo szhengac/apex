@@ -120,18 +120,18 @@ class FusedLANS(torch.optim.Optimizer):
                     state['exp_avg'] = torch.zeros_like(p.data)
                     # Exponential moving average of gradient values
                     state['exp_avg_sq'] = torch.zeros_like(p.data)
-                    # Buffer for scaled grad
-                    state['scaled_grad'] = torch.zeros_like(p.data)
 
+                # Buffer for scaled grad
+                scaled_grad = torch.zeros_like(p.data)
                 if p.dtype == torch.float16:
                     g_16.append(p.grad.data)
-                    q_16.append(state['scaled_grad'])
+                    q_16.append(scaled_grad)
                     p_16.append(p.data)
                     m_16.append(state['exp_avg'])
                     v_16.append(state['exp_avg_sq'])
                 elif p.dtype == torch.float32:
                     g_32.append(p.grad.data)
-                    q_32.append(state['scaled_grad'])
+                    q_32.append(scaled_grad)
                     p_32.append(p.data)
                     m_32.append(state['exp_avg'])
                     v_32.append(state['exp_avg_sq'])
