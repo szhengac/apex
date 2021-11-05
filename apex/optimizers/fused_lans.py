@@ -96,13 +96,6 @@ class FusedLANS(torch.optim.Optimizer):
             beta1, beta2 = group['betas']
             grad_averaging = 1 if group['grad_averaging'] else 0
 
-            # assume same step across group now to simplify things
-            # per parameter step can be easily support by making it tensor, or pass list into kernel
-            if 'step' in group:
-                group['step'] += 1
-            else:
-                group['step'] = 1
-
             # create lists for multi-tensor apply
             g_16, q_16, p_16, m_16, v_16 = [], [], [], [], []
             g_32, q_32, p_32, m_32, v_32 = [], [], [], [], []
@@ -116,6 +109,7 @@ class FusedLANS(torch.optim.Optimizer):
                 state = self.state[p]
                 # State initialization
                 if len(state) == 0:
+                    state['step'] = 0
                     # Exponential moving average of gradient values
                     state['exp_avg'] = torch.zeros_like(p.data)
                     # Exponential moving average of gradient values
@@ -139,6 +133,7 @@ class FusedLANS(torch.optim.Optimizer):
                     raise RuntimeError('FusedLANS only support fp16 and fp32.')
 
             if(len(g_16) > 0):
+                state['step'] += 1
                 multi_tensor_applier(self.multi_tensor_lans,
                                      self._dummy_overflow_buf,
                                      [g_16, q_16, p_16, m_16, v_16],
@@ -146,13 +141,14 @@ class FusedLANS(torch.optim.Optimizer):
                                      beta1,
                                      beta2,
                                      group['eps'],
-                                     group['step'],
+                                     state['step'],
                                      bias_correction,
                                      group['weight_decay'],
                                      grad_averaging,
                                      self.adam_w_mode,
                                      group['normalize_grad'])
             if(len(g_32) > 0):
+                state['step'] += 1
                 multi_tensor_applier(self.multi_tensor_lans,
                                      self._dummy_overflow_buf,
                                      [g_32, q_32, p_32, m_32, v_32],
@@ -160,7 +156,7 @@ class FusedLANS(torch.optim.Optimizer):
                                      beta1,
                                      beta2,
                                      group['eps'],
-                                     group['step'],
+                                     state['step'],
                                      bias_correction,
                                      group['weight_decay'],
                                      grad_averaging,
