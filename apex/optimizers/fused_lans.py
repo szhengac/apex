@@ -46,6 +46,8 @@ class FusedLANS(torch.optim.Optimizer):
             method is called. (default: True)
         normalize_grad (bool, optional): whether to normalize per-tensor grad
             (default: True)
+        stochastic_rounding (bool, optional): whether to perform stochastic rounding for bfloat16 update
+            (default: False)
 
     .. _Accelerated Large Batch Optimization of BERT Pretraining in 54 minutes:
         https://arxiv.org/abs/2006.13484
@@ -54,11 +56,12 @@ class FusedLANS(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, bias_correction=True,
                  betas=(0.9, 0.999), eps=1e-6, weight_decay=0.01,
                  adam_w_mode=True, grad_averaging=True, set_grad_none=True,
-                 normalize_grad=True):
+                 normalize_grad=True, stochastic_rounding=False):
         defaults = dict(lr=lr, bias_correction=bias_correction,
                         betas=betas, eps=eps, weight_decay=weight_decay,
                         grad_averaging=grad_averaging,
-                        normalize_grad=normalize_grad)
+                        normalize_grad=normalize_grad,
+                        stochastic_rounding=stochastic_rounding)
         super(FusedLANS, self).__init__(params, defaults)
         if multi_tensor_applier.available:
             import amp_C
@@ -117,20 +120,21 @@ class FusedLANS(torch.optim.Optimizer):
 
                 # Buffer for scaled grad
                 scaled_grad = torch.zeros_like(p.data)
-                if p.dtype == torch.float16:
+                if p.dtype == torch.float16 or torch.bfloat16:
                     g_16.append(p.grad.data)
                     q_16.append(scaled_grad)
                     p_16.append(p.data)
                     m_16.append(state['exp_avg'])
                     v_16.append(state['exp_avg_sq'])
                 elif p.dtype == torch.float32:
+                    assert not group['stochastic_rounding'], 'stochastic rounding has to be disabled when float32 optimizer is used'
                     g_32.append(p.grad.data)
                     q_32.append(scaled_grad)
                     p_32.append(p.data)
                     m_32.append(state['exp_avg'])
                     v_32.append(state['exp_avg_sq'])
                 else:
-                    raise RuntimeError('FusedLANS only support fp16 and fp32.')
+                    raise RuntimeError('FusedLANS only support fp16, bfloat16, and fp32.')
 
             if(len(g_16) > 0):
                 state['step'] += 1
@@ -146,7 +150,8 @@ class FusedLANS(torch.optim.Optimizer):
                                      group['weight_decay'],
                                      grad_averaging,
                                      self.adam_w_mode,
-                                     group['normalize_grad'])
+                                     group['normalize_grad'],
+                                     group['stochastic_rounding'])
             if(len(g_32) > 0):
                 state['step'] += 1
                 multi_tensor_applier(self.multi_tensor_lans,
@@ -161,6 +166,7 @@ class FusedLANS(torch.optim.Optimizer):
                                      group['weight_decay'],
                                      grad_averaging,
                                      self.adam_w_mode,
-                                     group['normalize_grad'])
+                                     group['normalize_grad'],
+                                     False)
 
         return loss

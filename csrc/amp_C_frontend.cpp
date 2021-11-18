@@ -132,7 +132,8 @@ void multi_tensor_lans_cuda(
   const float weight_decay,
   const int grad_averaging,
   const int mode,
-  const bool normalize_grad);
+  const bool normalize_grad,
+  const bool stochastic_rounding);
 
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

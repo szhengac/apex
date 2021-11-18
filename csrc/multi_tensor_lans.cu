@@ -5,10 +5,15 @@
 // Another possibility:
 // #include <torch/all.h>
 
+#include <curand_kernel.h>
+
+#include <ATen/CUDAGeneratorImpl.h>
+
 #include <assert.h>
 
 #include "type_shim.h"
 #include "multi_tensor_apply.cuh"
+#include "stochastic_round.cuh"
 
 #define BLOCK_SIZE 512
 #define ILP 4
@@ -25,6 +30,7 @@ std::tuple<at::Tensor, at::Tensor> multi_tensor_l2norm_cuda(
   at::optional<bool> per_tensor_python);
 
 using MATH_T = float;
+using MATH_T4 = float4;
 
 template<typename T>
 struct LANSStage1Functor
@@ -230,6 +236,90 @@ struct LANSStage2Functor
       }
     }
   }
+
+  __device__ __forceinline__ void operator()(
+    int chunk_size,
+    volatile int* noop_gmem,
+    TensorListMetadata<3>& tl,
+    const float beta1,
+    const float beta3,
+    const float* per_tensor_param_norm,
+    const float* per_tensor_update_m_norm,
+    const float* per_tensor_update_g_norm,
+    const float learning_rate,
+    std::pair<uint64_t, uint64_t> seeds)
+  {
+    // I'd like this kernel to propagate infs/nans.
+    // if(*noop_gmem == 1)
+    //   return;
+
+    int tensor_loc = tl.block_to_tensor[blockIdx.x];
+    int tensor_num = tl.start_tensor_this_launch + tensor_loc;
+    int chunk_idx = tl.block_to_chunk[blockIdx.x];
+    int n = tl.sizes[tensor_loc];
+
+    float param_norm = per_tensor_param_norm[tensor_num];
+    float update_m_norm = per_tensor_update_m_norm[tensor_num];
+    float update_g_norm = per_tensor_update_g_norm[tensor_num];
+    MATH_T ratio_m = (update_m_norm != 0.0f && param_norm != 0.0f) ? learning_rate * (param_norm / update_m_norm) : learning_rate;
+    MATH_T ratio_g = (update_g_norm != 0.0f && param_norm != 0.0f) ? learning_rate * (param_norm / update_g_norm) : learning_rate;
+    ratio_m *= beta1;
+    ratio_g *= beta3;
+
+    T* update_m = (T*)tl.addresses[0][tensor_loc];
+    update_m += chunk_idx*chunk_size;
+
+    T* update_g = (T*)tl.addresses[1][tensor_loc];
+    update_g += chunk_idx*chunk_size;
+
+    T* p = (T*)tl.addresses[2][tensor_loc];
+    p += chunk_idx*chunk_size;
+
+    n -= chunk_idx*chunk_size;
+
+    curandStatePhilox4_32_10_t state;
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    curand_init(
+        seeds.first,
+        idx,
+        seeds.second,
+        &state);
+
+    for(int i_start = 0;
+            i_start < n && i_start < chunk_size;
+            i_start += blockDim.x*ILP)
+    {
+      MATH_T r_p[ILP];
+      MATH_T r_update_m[ILP];
+      MATH_T r_update_g[ILP];
+      MATH_T4 rand = curand_uniform4(&state);
+#pragma unroll
+      for(int ii = 0; ii < ILP; ii++)
+      {
+        int i = i_start + threadIdx.x + ii*blockDim.x;
+        if(i < n && i < chunk_size)
+        {
+          r_p[ii] = p[i];
+          r_update_m[ii] = update_m[i];
+          r_update_g[ii] = update_g[i];
+        }
+      }
+#pragma unroll
+      for(int ii = 0; ii < ILP; ii++)
+      {
+        r_p[ii] = r_p[ii] - (ratio_m * r_update_m[ii]) - (ratio_g * r_update_g[ii]);
+      }
+#pragma unroll
+      for(int ii = 0; ii < ILP; ii++)
+      {
+        int i = i_start + threadIdx.x + ii*blockDim.x;
+        if(i < n && i < chunk_size)
+        {
+          p[i] = __stochastic_round<T>(r_p[ii], (&rand.x)[ii]);
+        }
+      }
+    }
+  }
 };
 
 
@@ -246,7 +336,8 @@ void multi_tensor_lans_cuda(
   const float weight_decay,
   const int grad_averaging,
   const int mode,
-  const bool normalize_grad)
+  const bool normalize_grad,
+  const bool stochastic_rounding)
 {
   using namespace at;
   // Master weight and 32bit momentum(potentially changing) is not handled by this
@@ -275,7 +366,7 @@ void multi_tensor_lans_cuda(
   // We now in-place modify grad to store update before compute its norm
   // Generally this is not a issue since people modify grad in step() method all the time
   // We can also grab list of empty tensor to avoid this, but I'd like to save space/cpu code
-  DISPATCH_FLOAT_AND_HALF(tensor_lists[0][0].scalar_type(), 0, "lans_stage_1",
+  DISPATCH_FLOAT_HALF_AND_BFLOAT(tensor_lists[0][0].scalar_type(), 0, "lans_stage_1",
       multi_tensor_apply<5>(
         BLOCK_SIZE,
         chunk_size,
@@ -301,19 +392,43 @@ void multi_tensor_lans_cuda(
 
   std::vector<std::vector<at::Tensor>> grad_q_param_list(tensor_lists.begin(), tensor_lists.begin()+3);
 
-  DISPATCH_FLOAT_AND_HALF(tensor_lists[0][0].scalar_type(), 0, "lans_stage_2",
-      multi_tensor_apply<3>(
-        BLOCK_SIZE,
-        chunk_size,
-       	noop_flag,
-        grad_q_param_list,
-        LANSStage2Functor<scalar_t_0>(),
-	beta1,
-	beta3,
-        std::get<1>(param_norm_tuple).DATA_PTR<float>(),
-        std::get<1>(update_m_norm_tuple).DATA_PTR<float>(),
-        std::get<1>(update_g_norm_tuple).DATA_PTR<float>(),
-        lr); )
+  if(stochastic_rounding)
+  {
+    auto gen = at::cuda::detail::getDefaultCUDAGenerator();
+    std::pair<uint64_t, uint64_t> rng_engine_inputs;
+    int64_t counter_offset = (chunk_size - 1) / BLOCK_SIZE + 1;
+    std::lock_guard<std::mutex> lock(gen.mutex());
+    rng_engine_inputs = at::check_generator<at::CUDAGeneratorImpl>(gen)->philox_engine_inputs(counter_offset);
+
+    DISPATCH_FLOAT_HALF_AND_BFLOAT(tensor_lists[0][0].scalar_type(), 0, "lans_stage_2",
+        multi_tensor_apply<3>(
+          BLOCK_SIZE,
+          chunk_size,
+          noop_flag,
+          grad_q_param_list,
+          LANSStage2Functor<scalar_t_0>(),
+          beta1,
+          beta3,
+          std::get<1>(param_norm_tuple).DATA_PTR<float>(),
+          std::get<1>(update_m_norm_tuple).DATA_PTR<float>(),
+          std::get<1>(update_g_norm_tuple).DATA_PTR<float>(),
+          lr,
+          rng_engine_inputs); )
+  } else {
+    DISPATCH_FLOAT_HALF_AND_BFLOAT(tensor_lists[0][0].scalar_type(), 0, "lans_stage_2",
+        multi_tensor_apply<3>(
+          BLOCK_SIZE,
+          chunk_size,
+          noop_flag,
+          grad_q_param_list,
+          LANSStage2Functor<scalar_t_0>(),
+          beta1,
+          beta3,
+          std::get<1>(param_norm_tuple).DATA_PTR<float>(),
+          std::get<1>(update_m_norm_tuple).DATA_PTR<float>(),
+          std::get<1>(update_g_norm_tuple).DATA_PTR<float>(),
+          lr); )
+  }
 
   AT_CUDA_CHECK(cudaGetLastError());
 
