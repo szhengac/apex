@@ -1,14 +1,13 @@
 #include <ATen/ATen.h>
 #include <ATen/AccumulateType.h>
+#include <ATen/CUDAGeneratorImpl.h>
+#include <ATen/cuda/CUDAGraphsUtils.cuh>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/Exceptions.h>
 // Another possibility:
 // #include <torch/all.h>
 
 #include <curand_kernel.h>
-
-#include <ATen/CUDAGeneratorImpl.h>
-
 #include <assert.h>
 
 #include "type_shim.h"
@@ -247,7 +246,7 @@ struct LANSStage2Functor
     const float* per_tensor_update_m_norm,
     const float* per_tensor_update_g_norm,
     const float learning_rate,
-    std::pair<uint64_t, uint64_t> seeds)
+    at::PhiloxCudaState philox_args)
   {
     // I'd like this kernel to propagate infs/nans.
     // if(*noop_gmem == 1)
@@ -278,11 +277,12 @@ struct LANSStage2Functor
     n -= chunk_idx*chunk_size;
 
     curandStatePhilox4_32_10_t state;
+    auto seeds = at::cuda::philox::unpack(philox_args);
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     curand_init(
-        seeds.first,
+        std::get<0>(seeds),
         idx,
-        seeds.second,
+        std::get<1>(seeds),
         &state);
 
     for(int i_start = 0;
@@ -395,10 +395,10 @@ void multi_tensor_lans_cuda(
   if(stochastic_rounding)
   {
     auto gen = at::cuda::detail::getDefaultCUDAGenerator();
-    std::pair<uint64_t, uint64_t> rng_engine_inputs;
+    at::PhiloxCudaState rng_engine_inputs;
     int64_t counter_offset = (chunk_size - 1) / BLOCK_SIZE + 1;
     std::lock_guard<std::mutex> lock(gen.mutex());
-    rng_engine_inputs = at::check_generator<at::CUDAGeneratorImpl>(gen)->philox_engine_inputs(counter_offset);
+    rng_engine_inputs = at::check_generator<at::CUDAGeneratorImpl>(gen)->philox_cuda_state(counter_offset);
 
     DISPATCH_FLOAT_HALF_AND_BFLOAT(tensor_lists[0][0].scalar_type(), 0, "lans_stage_2",
         multi_tensor_apply<3>(
