@@ -397,8 +397,11 @@ void multi_tensor_lans_cuda(
     auto gen = at::cuda::detail::getDefaultCUDAGenerator();
     at::PhiloxCudaState rng_engine_inputs;
     uint64_t counter_offset = (chunk_size - 1) / BLOCK_SIZE + 1;
-    std::lock_guard<std::mutex> lock(gen.mutex());
-    rng_engine_inputs = at::check_generator<at::CUDAGeneratorImpl>(gen)->philox_cuda_state(counter_offset);
+    {
+      // See Note [Acquire lock when using random generators]
+      std::lock_guard<std::mutex> lock(gen.mutex());
+      rng_engine_inputs = at::check_generator<at::CUDAGeneratorImpl>(gen)->philox_cuda_state(counter_offset);
+    }
 
     DISPATCH_FLOAT_HALF_AND_BFLOAT(tensor_lists[0][0].scalar_type(), 0, "lans_stage_2",
         multi_tensor_apply<3>(
