@@ -1,7 +1,9 @@
 #include <ATen/ATen.h>
 
-#ifdef OLD_GENERATOR
+#ifdef OLD_GENERATOR_PT109
 #include <ATen/CUDAGenerator.h>
+#elif defined(OLD_GENERATOR_PT110)
+#include <ATen/CUDAGeneratorImpl.h>
 #else
 #include <ATen/CUDAGeneratorImpl.h>
 #endif
@@ -210,7 +212,7 @@ void apex_fused_dropout_cuda(scalar_t const *inputs,
   std::pair<uint64_t, uint64_t> rng_engine_inputs;
   {
     // See Note [Acquire lock when using random generators]
-#ifdef OLD_GENERATOR
+#ifdef OLD_GENERATOR_PT109
     std::lock_guard<std::mutex> lock(gen->mutex_);
     rng_engine_inputs = gen->philox_engine_inputs(counter_offset);
 #else
@@ -248,7 +250,7 @@ void apex_dropout_add_cuda(scalar_t const *inputs,
   std::pair<uint64_t, uint64_t> rng_engine_inputs;
   {
     // See Note [Acquire lock when using random generators]
-#ifdef OLD_GENERATOR
+#ifdef OLD_GENERATOR_PT109
     std::lock_guard<std::mutex> lock(gen->mutex_);
     rng_engine_inputs = gen->philox_engine_inputs(counter_offset);
 #else

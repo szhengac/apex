@@ -1,11 +1,19 @@
 #include <ATen/ATen.h>
 #include <ATen/AccumulateType.h>
-#include <ATen/CUDAGeneratorImpl.h>
 #include <ATen/cuda/CUDAGraphsUtils.cuh>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/Exceptions.h>
 // Another possibility:
 // #include <torch/all.h>
+
+#ifdef OLD_GENERATOR_PT109
+#include <ATen/CUDAGenerator.h>
+#elif defined(OLD_GENERATOR_PT110)
+#include <ATen/CUDAGeneratorImpl.h>
+#else
+#include <ATen/CUDAGeneratorImpl.h>
+#endif
+
 
 #include <curand_kernel.h>
 #include <assert.h>
