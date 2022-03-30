@@ -5,7 +5,7 @@
 #elif defined(OLD_GENERATOR_PT110)
 #include <ATen/CUDAGeneratorImpl.h>
 #else
-#include <ATen/CUDAGeneratorImpl.h>
+#include <ATen/cuda/CUDAGeneratorImpl.h>
 #endif
 
 #include <ATen/cuda/CUDAContext.h>
