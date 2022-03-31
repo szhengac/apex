@@ -1,6 +1,10 @@
 #include <ATen/ATen.h>
 #include <ATen/AccumulateType.h>
+#ifdef OLD_GENERATOR_PATH
 #include <ATen/CUDAGeneratorImpl.h>
+#else
+#include <ATen/cuda/CUDAGeneratorImpl.h>
+#endif
 #include <ATen/cuda/CUDAGraphsUtils.cuh>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/Exceptions.h>

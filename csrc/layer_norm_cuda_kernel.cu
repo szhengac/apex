@@ -76,6 +76,8 @@ void cuWelfordMuSigma2(
   U* buf,
   bool rms_only)
 {
+  // WARNING: rms is not supported in this kernel.
+
   // Assumptions:
   // 1) blockDim.x == warpSize
   // 2) Tensor is contiguous
@@ -310,7 +312,8 @@ void cuWelfordMuSigma2(
   const int i1,
   float& mu,
   float& sigma2,
-  float* buf)
+  float* buf,
+  bool rms_only)
 {
   // Assumptions:
   // 1) blockDim.x == warpSize
