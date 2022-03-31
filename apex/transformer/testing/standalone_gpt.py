@@ -16,6 +16,8 @@
 """GPT-2 model."""
 import enum
 import math
+import contextlib
+import json
 
 import torch
 import torch.nn.functional as F
@@ -67,7 +69,6 @@ def bias_gelu_back(g, bias, y):
     ff = 0.5 * x * ((1 - tanh_out * tanh_out) * (0.79788456 + 0.1070322243 * x * x)) + 0.5 * (1 + tanh_out)
     return ff * g
 
-
 class MegatronModule(torch.nn.Module):
     """Megatron specific extensions of torch Module with support
     for pipelining."""
@@ -76,26 +77,30 @@ class MegatronModule(torch.nn.Module):
         super(MegatronModule, self).__init__()
         self.share_word_embeddings = share_word_embeddings
 
-    def state_dict_for_save_checkpoint(self, destination=None, prefix="", keep_vars=False):
+
+    def state_dict_for_save_checkpoint(self, destination=None, prefix="",
+                                       keep_vars=False):
         """Use this function to override the state dict for
         saving checkpoints."""
         return self.state_dict(destination, prefix, keep_vars)
 
+
     def word_embeddings_weight(self):
-        if (
-            not parallel_state.is_pipeline_last_stage(ignore_virtual=True)
-            or parallel_state.get_pipeline_model_parallel_world_size() == 1
-        ):
+        if not parallel_state.is_pipeline_last_stage(ignore_virtual=True) or \
+                parallel_state.get_pipeline_model_parallel_world_size() == 1:
             return self.language_model.embedding.word_embeddings.weight
         else:
             if not self.share_word_embeddings:
-                raise Exception("word_embeddings_weight() called for last " "stage, but share_word_embeddings is false")
+                raise Exception("word_embeddings_weight() called for last "
+                                "stage, but share_word_embeddings is false")
             return self.word_embeddings.weight
+
 
     def initialize_word_embeddings(self, init_method_normal):
         args = get_args()
         if not self.share_word_embeddings:
-            raise Exception("initialize_word_embeddings() was called but " "share_word_embeddings is false")
+            raise Exception("initialize_word_embeddings() was called but "
+                            "share_word_embeddings is false")
 
         # This function just initializes the word embeddings in the final stage
         # when we are using pipeline parallelism. Nothing to do if we aren't
@@ -121,27 +126,25 @@ class MegatronModule(torch.nn.Module):
             # set word_embeddings weights to 0 here, then copy first
             # stage's weights using all_reduce below.
             self.word_embeddings = tensor_parallel.VocabParallelEmbedding(
-                args.padded_vocab_size, args.hidden_size, init_method=init_method_normal(args.init_method_std)
-            )
+                args.padded_vocab_size, args.hidden_size,
+                init_method=init_method_normal(args.init_method_std),
+		use_cpu_initialization=args.use_cpu_initialization)
             self.word_embeddings.weight.data.fill_(0)
             self.word_embeddings.weight.shared = True
 
         # Zero out initial weights for decoder embedding.
         # NOTE: We don't currently support T5 with the interleaved schedule.
-        if (
-            not parallel_state.is_pipeline_first_stage(ignore_virtual=True)
-            and not parallel_state.is_pipeline_last_stage(ignore_virtual=True)
-            and parallel_state.is_rank_in_embedding_group()
-        ):
+        if not parallel_state.is_pipeline_first_stage(ignore_virtual=True) and \
+                not parallel_state.is_pipeline_last_stage(ignore_virtual=True) and \
+                parallel_state.is_rank_in_embedding_group():
             self.language_model.embedding.zero_parameters()
 
         # Ensure that first and last stages have the same initial parameter
         # values.
         if torch.distributed.is_initialized():
             if parallel_state.is_rank_in_embedding_group():
-                torch.distributed.all_reduce(
-                    self.word_embeddings_weight().data, group=parallel_state.get_embedding_group()
-                )
+                torch.distributed.all_reduce(self.word_embeddings_weight().data,
+                                             group=parallel_state.get_embedding_group())
                 # All-reduce other embeddings as well as necessary. The last stage
                 # does not have these other embeddings, so just create placeholder
                 # tensors of the right shape with all zeros.
@@ -155,18 +158,14 @@ class MegatronModule(torch.nn.Module):
                     else:
                         self.language_model.embedding.cuda()
                         position_embeddings = self.language_model.embedding.position_embeddings
-                    torch.distributed.all_reduce(
-                        position_embeddings.weight.data, group=parallel_state.get_embedding_group()
-                    )
+                    torch.distributed.all_reduce(position_embeddings.weight.data,
+                                                 group=parallel_state.get_embedding_group())
         else:
-            print(
-                "WARNING! Distributed processes aren't initialized, so "
-                "word embeddings in the last layer are not initialized. "
-                "If you are just manipulating a model this is fine, but "
-                "this needs to be handled manually. If you are training "
-                "something is definitely wrong."
-            )
-
+            print("WARNING! Distributed processes aren't initialized, so "
+                  "word embeddings in the last layer are not initialized. "
+                  "If you are just manipulating a model this is fine, but "
+                  "this needs to be handled manually. If you are training "
+                  "something is definitely wrong.")
 
 class GeLUFunction(torch.autograd.Function):
     @staticmethod
@@ -248,8 +247,8 @@ class ParallelMLP(MegatronModule):
 
         # Project to 4h.
         self.dense_h_to_4h = tensor_parallel.ColumnParallelLinear(
-            args.hidden_size, args.ffn_hidden_size, gather_output=False, init_method=init_method, skip_bias_add=True
-        )
+            args.hidden_size, args.ffn_hidden_size, gather_output=False, init_method=init_method, skip_bias_add=True,
+        use_cpu_initialization=args.use_cpu_initialization)
 
         self.bias_gelu_fusion = args.bias_gelu_fusion
         self.activation_func = F.gelu
@@ -265,6 +264,7 @@ class ParallelMLP(MegatronModule):
             input_is_parallel=True,
             init_method=output_layer_init_method,
             skip_bias_add=True,
+            use_cpu_initialization=args.use_cpu_initialization
         )
 
     def forward(self, hidden_states):
@@ -322,17 +322,14 @@ class ParallelAttention(MegatronModule):
         # Strided linear layer.
         if attention_type == AttnType.self_attn:
             self.query_key_value = tensor_parallel.ColumnParallelLinear(
-                args.hidden_size, 3 * projection_size, gather_output=False, init_method=init_method
-            )
+                args.hidden_size, 3 * projection_size, gather_output=False, init_method=init_method, use_cpu_initialization=args.use_cpu_initialization)
         else:
             assert attention_type == AttnType.cross_attn
             self.query = tensor_parallel.ColumnParallelLinear(
-                args.hidden_size, projection_size, gather_output=False, init_method=init_method
-            )
+                args.hidden_size, projection_size, gather_output=False, init_method=init_method, use_cpu_initialization=args.use_cpu_initialization)
 
             self.key_value = tensor_parallel.ColumnParallelLinear(
-                args.hidden_size, 2 * projection_size, gather_output=False, init_method=init_method
-            )
+                args.hidden_size, 2 * projection_size, gather_output=False, init_method=init_method, use_cpu_initialization=args.use_cpu_initialization)
 
         coeff = None
         self.norm_factor = math.sqrt(self.hidden_size_per_attention_head)
@@ -362,6 +359,7 @@ class ParallelAttention(MegatronModule):
             input_is_parallel=True,
             init_method=output_layer_init_method,
             skip_bias_add=True,
+            use_cpu_initialization=args.use_cpu_initialization
         )
 
         # Inference key-value memory
@@ -1021,10 +1019,12 @@ class Embedding(MegatronModule):
         self.hidden_size = hidden_size
         self.init_method = init_method
         self.num_tokentypes = num_tokentypes
+        args = get_args()
 
         # Word embeddings (parallel).
         self.word_embeddings = tensor_parallel.VocabParallelEmbedding(
-            vocab_size, self.hidden_size, init_method=self.init_method
+            vocab_size, self.hidden_size, init_method=self.init_method,
+            use_cpu_initialization=args.use_cpu_initialization
         )
         self._word_embeddings_key = "word_embeddings"
 
@@ -1048,6 +1048,8 @@ class Embedding(MegatronModule):
 
         # Embeddings dropout
         self.embedding_dropout = torch.nn.Dropout(embedding_dropout_prob)
+        if torch.distributed.get_rank() == 0:
+            print("FINISH WORD EMBEDDING", self.word_embeddings)
 
     def zero_parameters(self):
         """Zero out all parameters in embedding."""
@@ -1423,18 +1425,29 @@ def post_language_model_processing(lm_output, labels, logit_weights, parallel_ou
             loss = tensor_parallel.vocab_parallel_cross_entropy(output.float(), labels)
         return loss
 
+def module_size(m: torch.nn.Module, only_trainable: bool = False):
+    """
+    returns the total number of parameters used by `m` (only counting
+    shared parameters once); if `only_trainable` is True, then only
+    includes parameters with `requires_grad = True`
+    """
+    parameters = list(m.parameters())
+    if only_trainable:
+        parameters = [p for p in parameters if p.requires_grad]
+    unique = {p.data_ptr(): p for p in parameters}.values()
+    return sum(p.numel() for p in unique)
 
 class GPTModel(MegatronModule):
     """GPT-2 Language model."""
 
-    def __init__(self, num_tokentypes=0, parallel_output=True, pre_process=True, post_process=True):
+    def __init__(self, num_tokentypes=0, parallel_output=True, pre_process=True, post_process=True, cpu_offload=False):
         super(GPTModel, self).__init__()
         args = get_args()
         self.parallel_output = parallel_output
         self.pre_process = pre_process
         self.post_process = post_process
         self.fp16_lm_cross_entropy = args.fp16_lm_cross_entropy
-
+        self.cpu_offload = cpu_offload
         self.language_model, self._language_model_key = get_language_model(
             num_tokentypes=num_tokentypes,
             add_pooler=False,
@@ -1462,20 +1475,21 @@ class GPTModel(MegatronModule):
         inference_max_sequence_len=None,
     ):
 
-        lm_output = self.language_model(
-            input_ids,
-            position_ids,
-            attention_mask,
-            set_inference_key_value_memory=set_inference_key_value_memory,
-            inference_max_sequence_len=inference_max_sequence_len,
-        )
-
-        if self.post_process:
-            return post_language_model_processing(
-                lm_output, labels, self.word_embeddings_weight(), self.parallel_output, self.fp16_lm_cross_entropy
+        with torch.autograd.graph.save_on_cpu() if self.cpu_offload else contextlib.nullcontext():
+            lm_output = self.language_model(
+                input_ids,
+                position_ids,
+                attention_mask,
+                set_inference_key_value_memory=set_inference_key_value_memory,
+                inference_max_sequence_len=inference_max_sequence_len,
             )
-        else:
-            return lm_output
+
+            if self.post_process:
+                return post_language_model_processing(
+                    lm_output, labels, self.word_embeddings_weight(), self.parallel_output, self.fp16_lm_cross_entropy
+                )
+            else:
+                return lm_output
 
     def state_dict_for_save_checkpoint(self, destination=None, prefix="", keep_vars=False):
 
@@ -1500,7 +1514,11 @@ class GPTModel(MegatronModule):
             state_dict = state_dict[self._language_model_key]
         self.language_model.load_state_dict(state_dict, strict=strict)
 
-
-def gpt_model_provider(pre_process=True, post_process=True):
-    model = GPTModel(num_tokentypes=0, parallel_output=True, pre_process=pre_process, post_process=post_process)
+def gpt_model_provider(pre_process=True, post_process=False, cpu_offload=False):
+    model = GPTModel(num_tokentypes=0, parallel_output=True, pre_process=pre_process, post_process=post_process, cpu_offload=cpu_offload)
+    if torch.distributed.get_rank() == 0:
+        init_dict = {"pre_process":pre_process, "post_process":post_process, "cpu_offload":cpu_offload}
+        print("Initialized GPT-2 w/:", json.dumps(init_dict))
+        n_params = module_size(model) * parallel_state.get_tensor_model_parallel_world_size() * parallel_state.get_pipeline_model_parallel_world_size()
+        print("Number of Parameters:", n_params)
     return model

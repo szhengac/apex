@@ -237,7 +237,7 @@ create_conv_bias_add_act_descriptors(int64_t* x_dim_padded,
                                            .setVirtual()
                                            .setId('A')  // after add
                                            .setAlignment(16)
-                                           .setDataType(dataType)
+                                           .setDataType(CUDNN_DATA_FLOAT)
                                            .build(),
                                        cudnn_frontend::TensorBuilder()
                                            .setDim(4, y_dim_padded)
@@ -245,7 +245,7 @@ create_conv_bias_add_act_descriptors(int64_t* x_dim_padded,
                                            .setVirtual()
                                            .setId('B')  // after bias
                                            .setAlignment(16)
-                                           .setDataType(dataType)
+                                           .setDataType(CUDNN_DATA_FLOAT)
                                            .build(),
                                        cudnn_frontend::TensorBuilder()
                                            .setDim(4, y_dim_padded)
@@ -253,7 +253,7 @@ create_conv_bias_add_act_descriptors(int64_t* x_dim_padded,
                                            .setId('C')  // after conv
                                            .setAlignment(16)
                                            .setVirtual()
-                                           .setDataType(dataType)
+                                           .setDataType(CUDNN_DATA_FLOAT)
                                            .build(),
                                        cudnn_frontend::TensorBuilder()
                                            .setDim(4, y_dim_padded)
@@ -268,7 +268,7 @@ create_conv_bias_add_act_descriptors(int64_t* x_dim_padded,
                                            .setId('D')  // after optional add
                                            .setAlignment(16)
                                            .setVirtual()
-                                           .setDataType(dataType)
+                                           .setDataType(CUDNN_DATA_FLOAT)
                                            .build());
 }
 
@@ -358,7 +358,7 @@ create_dconv_descriptors(int64_t* x_dim_padded,
                              .setVirtual()
                              .setId('A')  // after dconv
                              .setAlignment(16)
-                             .setDataType(dataType)
+                             .setDataType(CUDNN_DATA_FLOAT)
                              .build(),
                              cudnn_frontend::TensorBuilder()
                              .setDim(4, x_dim_padded)
@@ -366,7 +366,7 @@ create_dconv_descriptors(int64_t* x_dim_padded,
                              .setVirtual()
                              .setId('B')  // after drelu
                              .setAlignment(16)
-                             .setDataType(dataType)
+                             .setDataType(CUDNN_DATA_FLOAT)
                              .build());
 }
 
@@ -621,7 +621,7 @@ run_conv_scale_bias_add_activation(int64_t* x_dim_padded,
         DEBUG_CUDNN_MSG(log_buf, "variantPack " << variantPack.describe());
         cudnnStatus_t status = cudnnBackendExecute(handle_, plan.get_raw_desc(), variantPack.get_raw_desc());
         checkCudnnErr(status);
-        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error");
+        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error", status);
     } catch (cudnn_frontend::cudnnException e) {
       std::cout << log_buf.str() << "[ERROR] Exception " << e.what() << std::endl;
     }
@@ -749,7 +749,7 @@ run_conv_scale_bias(int64_t* x_dim_padded,
         DEBUG_CUDNN_MSG(log_buf, "variantPack " << variantPack.describe());
         cudnnStatus_t status = cudnnBackendExecute(handle_, plan.get_raw_desc(), variantPack.get_raw_desc());
         checkCudnnErr(status);
-        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error");
+        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error", status);
     } catch (cudnn_frontend::cudnnException e) {
       std::cout << log_buf.str() << "[ERROR] Exception " << e.what() << std::endl;
     }
@@ -877,7 +877,7 @@ run_dconv_drelu_dscale(int64_t* x_dim_padded,
         DEBUG_CUDNN_MSG(log_buf, "variantPack " << variantPack.describe());
         cudnnStatus_t status = cudnnBackendExecute(handle_, plan.get_raw_desc(), variantPack.get_raw_desc());
         checkCudnnErr(status);
-        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error");
+        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error", status);
     } catch (cudnn_frontend::cudnnException e) {
       std::cout << log_buf.str() << "[ERROR] Exception " << e.what() << std::endl;
     }
@@ -983,7 +983,7 @@ run_dconv(int64_t* x_dim_padded,
         DEBUG_CUDNN_MSG(log_buf, "variantPack " << variantPack.describe());
         cudnnStatus_t status = cudnnBackendExecute(handle_, plan.get_raw_desc(), variantPack.get_raw_desc());
         checkCudnnErr(status);
-        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error");
+        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error", status);
     } catch (cudnn_frontend::cudnnException e) {
       std::cout << log_buf.str() << "[ERROR] Exception " << e.what() << std::endl;
     }
@@ -1093,7 +1093,7 @@ run_dconv_add(int64_t* x_dim_padded,
         DEBUG_CUDNN_MSG(log_buf, "variantPack " << variantPack.describe());
         cudnnStatus_t status = cudnnBackendExecute(handle_, plan.get_raw_desc(), variantPack.get_raw_desc());
         checkCudnnErr(status);
-        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error");
+        cudnn_frontend::throw_if([status]() { return (status != CUDNN_STATUS_SUCCESS); }, "Plan execute error", status);
     } catch (cudnn_frontend::cudnnException e) {
       std::cout << log_buf.str() << "[ERROR] Exception " << e.what() << std::endl;
     }
